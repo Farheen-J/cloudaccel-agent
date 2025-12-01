@@ -1,4 +1,3 @@
-
 import { GoogleGenAI, Type } from "@google/genai";
 import { ProjectConfig, AgentPlan, GeneratedFile, AgentLogStep, ValidationResult, ModuleManifest } from '../types';
 
@@ -95,7 +94,7 @@ export const validateProjectSchema = (config: any): string[] => {
 const generateWithRetry = async <T>(
   operation: () => Promise<T>, 
   retries = 3, 
-  baseDelay = 2000, 
+  baseDelay = 10000, // Increased base delay for safety
   signal?: AbortSignal
 ): Promise<T> => {
   if (signal?.aborted) throw new Error("Operation cancelled");
@@ -111,7 +110,8 @@ const generateWithRetry = async <T>(
   } catch (error: any) {
     if (error.message === "Operation cancelled" || error.name === 'AbortError') throw error;
     if (retries > 0 && (error?.status === 429 || error?.code === 429 || error?.status === 503)) {
-      const delay = baseDelay * (4 - retries) + (Math.random() * 1000); 
+      console.warn(`API Rate Limit hit. Retrying in ${baseDelay/1000}s... (${retries} retries left)`);
+      const delay = baseDelay + (Math.random() * 2000); 
       await wait(delay, signal);
       return generateWithRetry(operation, retries - 1, baseDelay * 1.5, signal);
     }
@@ -122,15 +122,14 @@ const generateWithRetry = async <T>(
 // Helper to split bundled content into multiple files
 const splitBundledContent = (originalPath: string, content: string): GeneratedFile[] => {
     const files: GeneratedFile[] = [];
-    const baseDir = originalPath.substring(0, originalPath.lastIndexOf('/'));
+    // remove filename from path to get directory
+    // If originalPath is "output/deployments/main.tf", baseDir is "output/deployments"
+    const baseDir = originalPath.substring(0, originalPath.lastIndexOf('/')); 
     
-    // Robust Regex to match ### START OF FILE: filename ###
-    // Matches:
-    // 1. ### START OF FILE:
-    // 2. (Capturing Group 1): The filename (any non-newline characters)
-    // 3. Optional ###
-    // 4. Content (everything until next header)
-    const regex = /###\s*START OF FILE:\s*(.*?)\s*(?:###)?\s*[\r\n]+([\s\S]*?)(?=(?:###\s*START OF FILE:|$))/gi;
+    // Robust Regex to capture headers like "### START OF FILE: main.tf ###"
+    // Captures content until the next header or end of string
+    // [a-zA-Z0-9_\.-]+ matches filenames like "main.tf", "terraform.tfvars"
+    const regex = /###\s*START OF FILE:\s*([a-zA-Z0-9_\.-]+)\s*(?:###)?\s*[\r\n]+([\s\S]*?)(?=(?:###\s*START OF FILE:|$))/gi;
     
     let match;
     let found = false;
@@ -138,22 +137,25 @@ const splitBundledContent = (originalPath: string, content: string): GeneratedFi
     // Reset regex index
     regex.lastIndex = 0;
 
-    console.log("Attempting to split content for:", originalPath);
+    console.log(`Attempting to split content for ${originalPath}...`);
 
     while ((match = regex.exec(content)) !== null) {
         found = true;
         const filename = match[1].trim();
-        const fileContent = match[2].trim();
+        let fileContent = match[2].trim();
         
-        console.log("Found part:", filename);
+        // Clean markdown code blocks if they exist inside the section
+        // Removes ```hcl at start and ``` at end
+        fileContent = fileContent.replace(/```[a-z]*\n?/g, '').replace(/```$/g, '').trim();
+        
+        console.log(`Found split part: ${filename}`);
 
         if (filename && fileContent) {
             let type: GeneratedFile['type'] = 'module';
             if (originalPath.includes('ecosystem')) type = 'ecosystem';
             if (originalPath.includes('deployment')) type = 'deployment';
             
-            // Construct correct path. If originalPath was 'deployments/main.tf' and found 'variables.tf',
-            // new path is 'deployments/variables.tf'.
+            // Construct the new full path using the same base directory
             const newPath = `${baseDir}/${filename}`;
 
             files.push({
@@ -172,10 +174,12 @@ const splitBundledContent = (originalPath: string, content: string): GeneratedFi
         if (originalPath.includes('ecosystem')) type = 'ecosystem';
         if (originalPath.includes('deployment')) type = 'deployment';
         
+        const cleanContent = content.replace(/^```[a-z]*\n/, '').replace(/\n```$/, '');
+
         files.push({
             path: originalPath,
-            content: content,
-            originalContent: content, 
+            content: cleanContent,
+            originalContent: cleanContent, 
             type
         });
     }
@@ -197,9 +201,9 @@ Where TYPE is one of: MODULE, ECOSYSTEM, DEPLOYMENT, SCRIPT
 And PATH is the full file path.
 
 RULES:
-1. **Modules**: For each service (VPC, EC2, etc.), list ONLY the 'main.tf' file (e.g., [MODULE] output/modules/vpc/main.tf). The engineer will generate the rest.
+1. **Modules**: For each service (VPC, EC2, etc.), list ONLY the 'main.tf' file (e.g., [MODULE] output/modules/vpc/main.tf). The engineer will generate the rest as a bundle.
 2. **Ecosystem**: List ONLY '[ECOSYSTEM] output/ecosystem/main.tf'.
-3. **Deployments**: List ONLY '[DEPLOYMENT] output/deployments/main.tf'. Do NOT use subfolders like 'dev/'. Flat structure.
+3. **Deployments**: List ONLY '[DEPLOYMENT] output/deployments/main.tf'. Do NOT use subfolders like 'dev/' or 'prod/'. Use a flat structure.
 4. **Existing**: If use_case='existing', add '[SCRIPT] output/import_resources.sh'.
 
 Example Output:
@@ -235,9 +239,10 @@ Use these EXACT headers to separate files:
 ### START OF FILE: versions.tf ###
 
 RULES:
-1. **No Hardcoded IDs**: If use_case='existing', do NOT hardcode IDs in 'main.tf'. Use variables for everything. The import script will handle state binding.
-2. **Community Modules**: If true, wrap 'terraform-aws-modules'. Use 'for_each' on the module block.
-3. **Outputs**: Always export critical IDs/ARNs in 'outputs.tf'.
+1. **Existing Infrastructure**: Even if use_case='existing', you MUST generate standard 'resource' blocks (e.g., resource "aws_vpc" "this"). Do NOT generate 'data' sources for the primary resources. We intend to IMPORT the existing resources into this state.
+2. **No Hardcoded IDs**: Do NOT hardcode 'id' or 'resource_id' in 'main.tf'. Use variables if identifiers are needed. The import script will handle state binding.
+3. **Community Modules**: If true, wrap 'terraform-aws-modules'. Use 'for_each' on the module block.
+4. **Outputs**: Always export critical IDs/ARNs in 'outputs.tf'.
 `;
 
 const ECOSYSTEM_ARCHITECT_INSTRUCTION = `
@@ -253,14 +258,15 @@ Use these EXACT headers:
 ### START OF FILE: versions.tf ###
 
 RULES:
-1. **NO Hardcoding**: Do NOT hardcode CIDR blocks, instance types, or IPs in 'main.tf'. You MUST use 'var.<variable_name>'.
-2. **Variables**: Define all input variables in 'variables.tf' with 'default = null'.
-3. **Main**: Instantiate modules using 'for_each'. Wire outputs from one module to inputs of another.
+1. **MANAGER, NOT READER**: This is CRITICAL. Even for 'existing' infrastructure, you MUST instantiate the modules (e.g., module "vpc") as if managing them. Do NOT use 'data' sources to read existing resources. We are migrating them to Terraform management.
+2. **NO HARDCODING**: Do NOT hardcode CIDR blocks, instance types, AMIs, or IP ranges in 'main.tf'. You MUST use 'var.<variable_name>'.
+3. **NO PROVIDERS**: Do NOT define 'provider "aws"' blocks in the ecosystem. You MUST rely on providers passed in from the deployment layer.
+4. **Wiring**: Instantiate modules using 'for_each' where appropriate. Wire outputs from one module to inputs of another.
 `;
 
 const DEPLOYMENT_ENGINEER_INSTRUCTION = `
 You are the "CloudAccel Deployment Engineer".
-Configure the environment and instantiate the Ecosystem.
+Configure the environment and instantiate the Ecosystem per region.
 
 STRICT OUTPUT FORMAT (BUNDLED):
 You MUST generate multiple files combined into one text block.
@@ -271,17 +277,33 @@ Use these EXACT headers:
 ### START OF FILE: outputs.tf ###
 ### START OF FILE: versions.tf ###
 
+IMPORTANT: Do NOT wrap individual file contents in Markdown code blocks. Just raw text under each header.
+
 RULES:
-1. **The Missing Link**: In 'main.tf', you MUST instantiate the ecosystem module:
-   module "ecosystem" {
+1. **Multi-Region Support**: 
+   - Identify ALL unique regions in the input config.
+   - In 'main.tf', define a default provider (no alias) for backend init.
+   - Define an ALIASED provider for EACH region found:
+     provider "aws" { alias = "us_east_1" region = "us-east-1" }
+     provider "aws" { alias = "us_west_2" region = "us-west-2" }
+
+2. **The Missing Link (Ecosystem)**: 
+   - You MUST instantiate the 'ecosystem' module ONCE PER REGION to deploy resources in that region.
+   - Pass the specific aliased provider to that module instance.
+   
+   Example:
+   module "ecosystem_us_east_1" {
      source = "../../ecosystem"
-     ...pass all variables...
-     providers = { aws = aws }
+     project_name = var.project_name
+     vpcs = var.vpcs
+     ...pass other vars...
+     providers = { aws = aws.us_east_1 }
    }
-2. **Providers**: Define 'provider "aws"' in 'main.tf'.
-3. **Values**: Put actual values (CIDRs, instance types) in 'terraform.tfvars'.
-4. **No Subfolders**: Output all files directly to the target path.
-5. **No Hardcoded IDs**: In 'terraform.tfvars', strictly use configuration values. Do not output resource IDs.
+
+3. **Values**: Put actual configuration values (CIDRs, instance types) in 'terraform.tfvars'.
+4. **No Hardcoded IDs**: In 'terraform.tfvars', strictly use configuration values.
+5. **Structure**: Output files directly to the deployment folder. No subfolders (no 'dev/', no 'prod/').
+6. **Outputs**: Define 'outputs.tf' to expose the ecosystem outputs.
 `;
 
 const SCRIPT_ENGINEER_INSTRUCTION = `
@@ -291,9 +313,7 @@ Create a **MANUAL IMPORT GUIDE** (Bash script).
 RULES:
 1. **Manual Commands**: Do NOT write a complex loop. Write explicit 'terraform import' commands for each existing resource found in the config.
 2. **Commented**: Comment out the commands so the user can review them.
-3. **Structure**:
-   # --- VPC: us-east-1 ---
-   # terraform import module.ecosystem.module.vpc["vpc_existing1"].aws_vpc.this vpc-12345
+3. **Target**: Target the module instances in the ecosystem (e.g. module.ecosystem_us_east_1.module.vpc["vpc_existing1"]). 
 `;
 
 const VALIDATOR_INSTRUCTION = `
@@ -317,13 +337,19 @@ STRICT OUTPUT FORMAT (MARKDOWN + FIXES):
 
 STRICT AUTO-REMEDIATION RULES:
 1. **NO PLACEHOLDERS**: Do NOT add comments like "Restrict in production". ACTUALLY CHANGE the code to be secure (e.g. use private CIDRs).
-2. **Least Privilege**: Remove open 0.0.0.0/0 access on ports 22/3389.
+2. **Least Privilege**: Remove open 0.0.0.0/0 access on ports 22/3389. Change to 10.0.0.0/8 or similar.
 `;
 
 const WRITER_SYSTEM_INSTRUCTION = `
 You are the "CloudAccel Technical Writer Agent".
 Generate a comprehensive **README.md**.
-Include: Title, Architecture, Prerequisites, Modules Used, Deployment Guide.
+
+STRICT OUTPUT FORMAT (BUNDLED):
+Use these headers:
+### START OF FILE: README.md ###
+
+RULES:
+1. **README**: Include Title, Architecture overview, Prerequisites, Modules Used, Deployment Guide.
 `;
 
 const REVERSE_SYNC_INSTRUCTION = `
@@ -401,12 +427,11 @@ const generateArchitectBlueprint = async (config: ProjectConfig, signal?: AbortS
         contents: prompt,
         config: { 
             systemInstruction: ARCHITECT_BLUEPRINT_INSTRUCTION, 
-            responseMimeType: "text/plain" // Plain text to avoid JSON truncation
+            responseMimeType: "text/plain" 
         }
       });
       if (!response.text) throw new Error("Architect failed");
       
-      // Parse Line-Delimited Output
       const files: { path: string, type: GeneratedFile['type'] }[] = [];
       const lines = response.text.split('\n');
       
@@ -451,7 +476,10 @@ const generateFileStream = async (
       const streamResult = await ai.models.generateContentStream({
         model: 'gemini-2.5-flash',
         contents: prompt,
-        config: { systemInstruction: systemInstruction }
+        config: { 
+            systemInstruction: systemInstruction,
+            responseMimeType: "text/plain"
+        }
       });
 
       for await (const chunk of streamResult) {
@@ -461,9 +489,16 @@ const generateFileStream = async (
             fullText += chunkText;
             chunkCount++;
             onUpdate(chunkText);
-            if (chunkCount % 5 === 0) {
+            
+            // Debug Logs: Use a large offset to prevent ID collision with main logs
+            if (chunkCount % 2 === 0) {
                  onLog({ 
-                     id: logId, runId, agent: 'Orchestrator', status: 'running', timestamp: new Date(), level: 'debug', 
+                     id: logId + 50000 + chunkCount, // Unique ID per chunk
+                     runId, 
+                     agent: 'Orchestrator', 
+                     status: 'running', 
+                     timestamp: new Date(), 
+                     level: 'debug', 
                      message: `Streamed ${chunkText.length} chars...` 
                  });
             }
@@ -472,7 +507,7 @@ const generateFileStream = async (
       return fullText;
   }, 5, 5000, signal);
 
-  return fullText.replace(/^```[a-z]*\n/, '').replace(/\n```$/, '');
+  return fullText;
 };
 
 const generateSecurityAuditAndFixes = async (files: GeneratedFile[], signal?: AbortSignal): Promise<{report: string, remediated_files: {path:string, content:string}[]}> => {
@@ -488,13 +523,12 @@ const generateSecurityAuditAndFixes = async (files: GeneratedFile[], signal?: Ab
         contents: prompt,
         config: { 
             systemInstruction: AUDITOR_SYSTEM_INSTRUCTION, 
-            responseMimeType: "text/plain" // Text to avoid JSON limits
+            responseMimeType: "text/plain" 
         }
       });
       
       const fullText = response.text || "# Audit Failed";
       
-      // Parse the Report (Markdown) and Fixes (Bundled headers)
       const parts = fullText.split(/###\s*FIX APPLIED:/i);
       const report = parts[0];
       const remediated_files: {path:string, content:string}[] = [];
@@ -506,8 +540,6 @@ const generateSecurityAuditAndFixes = async (files: GeneratedFile[], signal?: Ab
           
           const path = part.substring(0, firstLineBreak).trim();
           let content = part.substring(firstLineBreak + 1).trim();
-          
-          // Remove trailing ### if present (from next header split)
           content = content.replace(/###$/, '').trim();
           
           remediated_files.push({ path: normalizePath(path), content });
@@ -517,16 +549,23 @@ const generateSecurityAuditAndFixes = async (files: GeneratedFile[], signal?: Ab
   }, 5, 5000, signal);
 };
 
-const generateReadme = async (config: ProjectConfig, summary: string, signal?: AbortSignal): Promise<string> => {
+const generateReadme = async (config: ProjectConfig, summary: string, signal?: AbortSignal): Promise<{readme: string}> => {
   const ai = getAIClient();
-  const prompt = `Generate README. Summary: ${summary}\nConfig: ${JSON.stringify(config)}`;
+  const prompt = `Generate Documentation (README). Summary: ${summary}\nConfig: ${JSON.stringify(config)}`;
+  
   return generateWithRetry(async () => {
       const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
         contents: prompt,
         config: { systemInstruction: WRITER_SYSTEM_INSTRUCTION }
       });
-      return response.text || "# Documentation\nGenerated by CloudAccel.";
+      
+      const fullText = response.text || "";
+      const files = splitBundledContent("README.md", fullText); // Use splitter to get parts
+      
+      const readme = files.find(f => f.path.endsWith('README.md'))?.content || "# Documentation\nGenerated by CloudAccel.";
+      
+      return { readme };
   }, 5, 5000, signal);
 };
 
@@ -543,6 +582,10 @@ export const analyzeAndGeneratePlan = async (
   getAIClient();
 
   onLog({ id: 1, runId, agent: 'Architect', status: 'running', timestamp: new Date(), level: 'info', message: 'Designing Infrastructure Blueprint...' });
+  
+  // Throttle Architect
+  await wait(1000, signal);
+  
   const blueprint = await generateArchitectBlueprint(config, signal);
   onLog({ id: 1, runId, agent: 'Architect', status: 'completed', timestamp: new Date(), level: 'info', message: `Blueprint designed.` });
   
@@ -564,7 +607,6 @@ export const analyzeAndGeneratePlan = async (
   
   onLog({ id: 15, runId, agent: 'Orchestrator', status: 'running', timestamp: new Date(), level: 'info', message: 'Spawning Specialized Engineers (Sequential)...' });
   
-  // STRICT SEQUENTIAL EXECUTION to prevent Rate Limits and ensure Bundling works
   const CONCURRENCY_LIMIT = 1;
   const queue = [...normalizedFiles];
   const fileLogIds = new Map<string, number>();
@@ -599,7 +641,8 @@ export const analyzeAndGeneratePlan = async (
             context = { 
                 service_config: foundService || config,
                 use_community_modules: config.use_community_modules,
-                module_manifest: moduleManifest 
+                module_manifest: moduleManifest,
+                use_case: config.use_case // Pass use_case explicitly
             };
           }
       }
@@ -612,26 +655,20 @@ export const analyzeAndGeneratePlan = async (
             onFileUpdate(file.path, partial);
         }, onLog, runId, stepId, signal);
         
-        // --- SPLITTING LOGIC ---
-        // Check for bundled headers and explode into multiple files
+        // --- Splitting Logic ---
         if (content.match(/###\s*START OF FILE:/i)) {
             const splitFiles = splitBundledContent(file.path, content);
             if (splitFiles.length > 0) {
-                // Remove the original placeholder file from plan
                 const placeholderIdx = plan.files.findIndex(f => f.path === file.path);
                 if (placeholderIdx !== -1) plan.files.splice(placeholderIdx, 1);
                 
-                // Add the new split files
                 splitFiles.forEach(sf => {
                     plan.files.push(sf);
                     onFileUpdate(sf.path, sf.content);
                 });
-                onLog({ id: stepId, runId, agent: 'Orchestrator', status: 'completed', timestamp: new Date(), level: 'debug', message: `Split bundle into ${splitFiles.length} files.` });
-            } else {
-                console.warn("Splitting returned 0 files for", file.path);
+                onLog({ id: stepId + 9999, runId, agent: 'Orchestrator', status: 'completed', timestamp: new Date(), level: 'debug', message: `Split bundle into ${splitFiles.length} files.` });
             }
         } else {
-             // Single file update
              const idx = plan.files.findIndex(f => f.path === file.path);
              if (idx !== -1) {
                  plan.files[idx].content = content;
@@ -645,8 +682,8 @@ export const analyzeAndGeneratePlan = async (
         onLog({ id: stepId, runId, agent: 'Orchestrator', status: 'error', timestamp: new Date(), level: 'info', message: `Failed: ${file.path}` });
       }
       
-      // Delay to respect rate limits
-      await wait(1500, signal); 
+      // CRITICAL DELAY: Prevent 429 Errors by forcing a pause between files
+      await wait(4000, signal); 
       await processNext();
   };
 
@@ -677,10 +714,12 @@ export const analyzeAndGeneratePlan = async (
   onLog({ id: 2, runId, agent: 'Auditor', status: 'completed', timestamp: new Date(), level: 'info', message: 'Audit complete.' });
   
   onLog({ id: 3, runId, agent: 'Writer', status: 'running', timestamp: new Date(), level: 'info', message: 'Writing Documentation...' });
-  const readme = await generateReadme(config, plan.summary, signal);
-  const readmeDoc: GeneratedFile = { path: './README.md', content: readme, originalContent: readme, type: 'doc' };
+  const docs = await generateReadme(config, plan.summary, signal);
+  
+  const readmeDoc: GeneratedFile = { path: './README.md', content: docs.readme, originalContent: docs.readme, type: 'doc' };
   plan.files.push(readmeDoc);
   onFileUpdate(readmeDoc.path, readmeDoc.content);
+
   onLog({ id: 3, runId, agent: 'Writer', status: 'completed', timestamp: new Date(), level: 'info', message: 'Done.' });
 
   return plan;

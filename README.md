@@ -158,6 +158,7 @@ This project is built with **React 19**, **Vite**, and **TypeScript**.
 
 ## 🛠️ Tech Stack
 
+*   **IDE**: Google AI Studio
 *   **AI Model**: Google Gemini 2.5 Flash
 *   **Frontend**: React 19, Tailwind CSS, Lucide Icons
 *   **Visualization**: D3.js (Interactive Topology Graph)

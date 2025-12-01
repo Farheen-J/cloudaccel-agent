@@ -258,10 +258,12 @@ Use these EXACT headers:
 ### START OF FILE: versions.tf ###
 
 RULES:
-1. **MANAGER, NOT READER**: This is CRITICAL. Even for 'existing' infrastructure, you MUST instantiate the modules (e.g., module "vpc") as if managing them. Do NOT use 'data' sources to read existing resources. We are migrating them to Terraform management.
-2. **NO HARDCODING**: Do NOT hardcode CIDR blocks, instance types, AMIs, or IP ranges in 'main.tf'. You MUST use 'var.<variable_name>'.
-3. **NO PROVIDERS**: Do NOT define 'provider "aws"' blocks in the ecosystem. You MUST rely on providers passed in from the deployment layer.
-4. **Wiring**: Instantiate modules using 'for_each' where appropriate. Wire outputs from one module to inputs of another.
+1. **MANAGER, NOT READER**: Even for 'existing' infrastructure, you MUST instantiate the modules as if managing them.
+2. **SINGLE MODULE INSTANCE**: You MUST instantiate modules using \`for_each\`. Do NOT create multiple module blocks for the same service (e.g., do NOT write \`module "vpc_1"\`, \`module "vpc_2"\`). Write ONE \`module "vpc"\` block and iterate over a variable (e.g. \`for_each = var.vpcs\`).
+3. **MAP VARIABLES**: In \`variables.tf\`, define inputs as maps (e.g. \`variable "vpcs" { type = map(any) }\`).
+4. **NO HARDCODING**: All configuration must come from variables.
+5. **NO PROVIDERS**: Do NOT define 'provider "aws"' blocks. Rely on inherited providers.
+6. **WIRING**: Wire outputs from one module to another where necessary.
 `;
 
 const DEPLOYMENT_ENGINEER_INSTRUCTION = `
@@ -282,28 +284,23 @@ IMPORTANT: Do NOT wrap individual file contents in Markdown code blocks. Just ra
 RULES:
 1. **Multi-Region Support**: 
    - Identify ALL unique regions in the input config.
-   - In 'main.tf', define a default provider (no alias) for backend init.
-   - Define an ALIASED provider for EACH region found:
-     provider "aws" { alias = "us_east_1" region = "us-east-1" }
-     provider "aws" { alias = "us_west_2" region = "us-west-2" }
-
-2. **The Missing Link (Ecosystem)**: 
-   - You MUST instantiate the 'ecosystem' module ONCE PER REGION to deploy resources in that region.
-   - Pass the specific aliased provider to that module instance.
+   - Define an ALIASED provider for EACH region (e.g. alias = "us_east_1").
+2. **Ecosystem Instantiation**: 
+   - Instantiate the 'ecosystem' module ONCE PER REGION.
+   - **CRITICAL**: Filter the input variables (e.g. \`vpcs\`) to pass ONLY the resources belonging to that specific region.
    
    Example:
    module "ecosystem_us_east_1" {
      source = "../../ecosystem"
-     project_name = var.project_name
-     vpcs = var.vpcs
-     ...pass other vars...
+     # Pass only resources for this region
+     vpcs = { for k, v in var.vpcs : k => v if v.region == "us-east-1" }
      providers = { aws = aws.us_east_1 }
    }
 
-3. **Values**: Put actual configuration values (CIDRs, instance types) in 'terraform.tfvars'.
-4. **No Hardcoded IDs**: In 'terraform.tfvars', strictly use configuration values.
-5. **Structure**: Output files directly to the deployment folder. No subfolders (no 'dev/', no 'prod/').
-6. **Outputs**: Define 'outputs.tf' to expose the ecosystem outputs.
+3. **Terraform.tfvars**: 
+   - Construct the full maps of resources (e.g. \`vpcs = { "vpc_existing1" = { ... }, "vpc_existing2" = { ... } }\`).
+   - Use the resource 'name' as the map key.
+4. **Structure**: Output files directly to the deployment folder.
 `;
 
 const SCRIPT_ENGINEER_INSTRUCTION = `
@@ -311,9 +308,10 @@ You are the "CloudAccel Script Engineer".
 Create a **MANUAL IMPORT GUIDE** (Bash script).
 
 RULES:
-1. **Manual Commands**: Do NOT write a complex loop. Write explicit 'terraform import' commands for each existing resource found in the config.
-2. **Commented**: Comment out the commands so the user can review them.
-3. **Target**: Target the module instances in the ecosystem (e.g. module.ecosystem_us_east_1.module.vpc["vpc_existing1"]). 
+1. **Targeting**: You must target the module instances created via \`for_each\` in the ecosystem.
+2. **Format**: The address format should be: \`module.ecosystem_<region_alias>.module.<service_name>["<resource_name>"].<resource_type>.this\` (or similar, depending on module structure).
+3. **Explicit Commands**: Write explicit 'terraform import' commands for each existing resource found in the config.
+4. **Commented**: Comment out the commands so the user can review them.
 `;
 
 const VALIDATOR_INSTRUCTION = `

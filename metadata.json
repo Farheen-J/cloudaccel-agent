@@ -1,0 +1,5 @@
+{
+  "name": "CloudAccel Agent",
+  "description": "AI-driven Accelerator Agent for Cloud Infrastructure automation using Terraform.",
+  "requestFramePermissions": []
+}

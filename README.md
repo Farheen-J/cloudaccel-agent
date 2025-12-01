@@ -20,23 +20,35 @@ CloudAccel uses a **Multi-Agent Orchestration Pattern**:
 
 ```mermaid
 graph TD
-    User[User / UI] -->|JSON Config| Validator[Validator Agent]
-    Validator -->|Validated Config| Librarian[Librarian Agent]
-    Librarian -->|Module Versions| Architect[Architect Agent]
-    Architect -->|Blueprint| Orchestrator[Orchestrator Engine]
+    User[USER / UI] --> Validator[VALIDATOR AGENT]
+    Validator --> Architect[ARCHITECT AGENT]
+    Architect --> Orchestrator[ORCHESTRATOR]
     
-    subgraph "Parallel Generation"
-        Orchestrator --> ModEng[Module Engineer]
-        Orchestrator --> EcoArch[Ecosystem Architect]
-        Orchestrator --> DeployEng[Deployment Engineer]
-        Orchestrator --> ScriptEng[Script Engineer]
+    subgraph "PARALLEL SPECIALIZED ENGINEERS"
+        Orchestrator --> ModEng[MODULE ENG]
+        Orchestrator --> EcoArch[ECOSYSTEM ARCH]
+        Orchestrator --> DepEng[DEPLOYMENT ENG]
+        Orchestrator --> ScrEng[SCRIPT ENG]
     end
     
-    ModEng -->|Streamed HCL| UI
-    EcoArch -->|Streamed HCL| UI
+    ModEng --> Auditor[AUDITOR AGENT]
+    EcoArch --> Auditor
+    DepEng --> Auditor
+    ScrEng --> Auditor
     
-    UI -->|Files| Auditor[Auditor Agent]
-    Auditor -->|Security Report| User
+    Auditor --> Final[FINAL ARTIFACTS]
+    
+    %% Styling to match the SVG colors
+    style User fill:#1f2937,stroke:#374151,color:#f3f4f6
+    style Validator fill:#1e3a8a,stroke:#3b82f6,color:#f3f4f6
+    style Architect fill:#1e3a8a,stroke:#3b82f6,color:#f3f4f6
+    style Orchestrator fill:#4c1d95,stroke:#8b5cf6,color:#f3f4f6
+    style ModEng fill:#1e3a8a,stroke:#3b82f6,color:#f3f4f6
+    style EcoArch fill:#1e3a8a,stroke:#3b82f6,color:#f3f4f6
+    style DepEng fill:#1e3a8a,stroke:#3b82f6,color:#f3f4f6
+    style ScrEng fill:#1e3a8a,stroke:#3b82f6,color:#f3f4f6
+    style Auditor fill:#7f1d1d,stroke:#ef4444,color:#f3f4f6
+    style Final fill:#064e3b,stroke:#10b981,color:#f3f4f6
 ```
 
 ## 🛠️ Tech Stack

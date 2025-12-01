@@ -33,7 +33,7 @@ CloudAccel acts as a force multiplier for the DevOps team. It transforms the IaC
 
 ## 🏗️ Architecture
 
-CloudAccel utilizes a **Hub-and-Spoke Multi-Agent System** powered by **Google Gemini 2.5 Flash**.
+CloudAccel utilizes a **Hub-and-Spoke Multi-Agent System** powered by **Google Gemini 2.5 Flash**. This system supports AWS and Terraform
 
 ```mermaid
 graph TD
@@ -167,4 +167,4 @@ This project is built with **React 19**, **Vite**, and **TypeScript**.
 
 ## 📄 License
 
-MIT License. Created for the Google Cloud AI Hackathon.
+MIT License. Created for the Google - Kaggle Agentic AI Hackathon.

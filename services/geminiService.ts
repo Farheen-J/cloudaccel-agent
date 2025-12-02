@@ -1,5 +1,6 @@
+
 import { GoogleGenAI, Type } from "@google/genai";
-import { ProjectConfig, AgentPlan, GeneratedFile, AgentLogStep, ValidationResult, ModuleManifest } from '../types';
+import { ProjectConfig, AgentPlan, GeneratedFile, AgentLogStep, ValidationResult, ModuleManifest, QualityReport } from '../types';
 
 // Dynamic Client Initializer for BYOK
 const getAIClient = () => {
@@ -243,6 +244,7 @@ RULES:
 2. **No Hardcoded IDs**: Do NOT hardcode 'id' or 'resource_id' in 'main.tf'. Use variables if identifiers are needed. The import script will handle state binding.
 3. **Community Modules**: If true, wrap 'terraform-aws-modules'. Use 'for_each' on the module block.
 4. **Outputs**: Always export critical IDs/ARNs in 'outputs.tf'.
+5. **SINGLE INSTANCE**: Do NOT use 'for_each' on the root resources (unless wrapping a community module that requires it). The module represents a SINGLE instance of the service. The caller (Ecosystem) handles iteration via the module call.
 `;
 
 const ECOSYSTEM_ARCHITECT_INSTRUCTION = `
@@ -262,8 +264,9 @@ RULES:
 2. **SINGLE MODULE INSTANCE**: You MUST instantiate modules using \`for_each\`. Do NOT create multiple module blocks for the same service (e.g., do NOT write \`module "vpc_1"\`, \`module "vpc_2"\`). Write ONE \`module "vpc"\` block and iterate over a variable (e.g. \`for_each = var.vpcs\`).
 3. **MAP VARIABLES**: In \`variables.tf\`, define inputs as maps (e.g. \`variable "vpcs" { type = map(any) }\`).
 4. **NO HARDCODING**: All configuration must come from variables.
-5. **NO PROVIDERS**: Do NOT define 'provider "aws"' blocks. Rely on inherited providers.
+5. **NO PROVIDERS**: Do NOT define 'provider "aws"' blocks in the ecosystem. Rely on inherited providers.
 6. **WIRING**: Wire outputs from one module to another where necessary.
+7. **PASS WHOLE MAPS**: If a child module input expects a map/list (e.g. 'vpcs'), pass the variable directly (e.g. \`vpcs = var.vpcs\`). Do NOT iterate or break it down unless the module explicitly demands singular inputs.
 `;
 
 const DEPLOYMENT_ENGINEER_INSTRUCTION = `
@@ -284,23 +287,28 @@ IMPORTANT: Do NOT wrap individual file contents in Markdown code blocks. Just ra
 RULES:
 1. **Multi-Region Support**: 
    - Identify ALL unique regions in the input config.
-   - Define an ALIASED provider for EACH region (e.g. alias = "us_east_1").
-2. **Ecosystem Instantiation**: 
-   - Instantiate the 'ecosystem' module ONCE PER REGION.
-   - **CRITICAL**: Filter the input variables (e.g. \`vpcs\`) to pass ONLY the resources belonging to that specific region.
+   - In 'main.tf', define a default provider (no alias) for backend init.
+   - Define an ALIASED provider for EACH region found:
+     provider "aws" { alias = "us_east_1" region = "us-east-1" }
+     provider "aws" { alias = "us_west_2" region = "us-west-2" }
+
+2. **The Missing Link (Ecosystem)**: 
+   - You MUST instantiate the 'ecosystem' module ONCE PER REGION to deploy resources in that region.
+   - Pass the specific aliased provider to that module instance.
    
    Example:
    module "ecosystem_us_east_1" {
      source = "../../ecosystem"
-     # Pass only resources for this region
-     vpcs = { for k, v in var.vpcs : k => v if v.region == "us-east-1" }
+     project_name = var.project_name
+     vpcs = var.vpcs
+     ...pass other vars...
      providers = { aws = aws.us_east_1 }
    }
 
-3. **Terraform.tfvars**: 
-   - Construct the full maps of resources (e.g. \`vpcs = { "vpc_existing1" = { ... }, "vpc_existing2" = { ... } }\`).
-   - Use the resource 'name' as the map key.
-4. **Structure**: Output files directly to the deployment folder.
+3. **Values**: Put actual configuration values (CIDRs, instance types) in 'terraform.tfvars'.
+4. **No Hardcoded IDs**: In 'terraform.tfvars', strictly use configuration values.
+5. **Structure**: Output files directly to the deployment folder. No subfolders (no 'dev/', no 'prod/').
+6. **Outputs**: Define 'outputs.tf' to expose the ecosystem outputs.
 `;
 
 const SCRIPT_ENGINEER_INSTRUCTION = `
@@ -348,6 +356,32 @@ Use these headers:
 
 RULES:
 1. **README**: Include Title, Architecture overview, Prerequisites, Modules Used, Deployment Guide.
+`;
+
+const JUDGE_INSTRUCTION = `
+You are the "CloudAccel Quality Judge Agent".
+Evaluate the provided Terraform code against a STRICT OBJECTIVE RUBRIC.
+
+RUBRIC:
+1. **Syntax Integrity (40pts)**: Are 'resource' and 'module' blocks correctly closed? Are variable references using 'var.'?
+2. **Security Posture (30pts)**: Does the code have '0.0.0.0/0' in security groups? (Deduct 10pts). Are 'sensitive' flags used on passwords? (Add 5pts).
+3. **Engineering Standards (30pts)**: Are variables defined in 'variables.tf' instead of hardcoded in 'main.tf'? Are 'outputs.tf' present? Is the ecosystem passing whole maps correctly?
+
+OUTPUT FORMAT (JSON ONLY):
+{
+  "score": number, // 0-100
+  "grade": "A" | "B" | "C" | "D" | "F",
+  "reasoning": [
+    {
+      "file": "string (file path of the issue)",
+      "issue": "string (description of the problem)",
+      "fix": "string (concrete suggestion for remediation)"
+    }
+  ]
+}
+
+DO NOT return a string description for reasoning. You MUST return an ARRAY of objects.
+DO NOT hallucinate errors. If the code looks standard, give a high score.
 `;
 
 const REVERSE_SYNC_INSTRUCTION = `
@@ -462,6 +496,7 @@ const generateFileStream = async (
     onLog: (log: AgentLogStep) => void,
     runId: string, 
     logId: number,
+    agentName: AgentLogStep['agent'],
     signal?: AbortSignal
 ): Promise<string> => {
   const ai = getAIClient();
@@ -493,7 +528,7 @@ const generateFileStream = async (
                  onLog({ 
                      id: logId + 50000 + chunkCount, // Unique ID per chunk
                      runId, 
-                     agent: 'Orchestrator', 
+                     agent: agentName, 
                      status: 'running', 
                      timestamp: new Date(), 
                      level: 'debug', 
@@ -567,6 +602,50 @@ const generateReadme = async (config: ProjectConfig, summary: string, signal?: A
   }, 5, 5000, signal);
 };
 
+const formatReasoning = (reasoning: any): string => {
+    if (typeof reasoning === 'string') return reasoning;
+    if (Array.isArray(reasoning)) {
+        return reasoning.map(r => {
+            if (typeof r === 'string') return `- ${r}`;
+            return `- **File**: ${r.file || 'N/A'}\n  - **Issue**: ${r.issue || r.message || 'N/A'}\n  - **Fix**: ${r.fix || r.suggestion || 'N/A'}`;
+        }).join('\n');
+    }
+    if (typeof reasoning === 'object') {
+        return JSON.stringify(reasoning, null, 2);
+    }
+    return "No reasoning provided.";
+};
+
+// NEW: Agent Evaluation Function
+const evaluateQuality = async (files: GeneratedFile[], signal?: AbortSignal): Promise<QualityReport> => {
+    const ai = getAIClient();
+    const tfCode = files
+        .filter(f => f.path.endsWith('.tf') || f.path.endsWith('.tfvars'))
+        .map(f => `--- ${f.path} ---\n${f.content}`)
+        .join('\n\n');
+
+    if (!tfCode) return { score: 0, grade: 'F', reasoning: "No code generated." };
+
+    const prompt = `Evaluate Quality of this Terraform Code:\n${tfCode.substring(0, 30000)}`; // Truncate to safety limit
+
+    return generateWithRetry(async () => {
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: prompt,
+            config: { 
+                systemInstruction: JUDGE_INSTRUCTION,
+                responseMimeType: "application/json"
+            }
+        });
+
+        if (!response.text) return { score: 0, grade: 'F', reasoning: "Evaluation failed." };
+        const parsed = JSON.parse(response.text) as QualityReport;
+        parsed.reasoning = formatReasoning(parsed.reasoning); // Normalize to string to prevent UI crash
+        return parsed;
+    }, 3, 5000, signal);
+};
+
+
 // --- ORCHESTRATOR ---
 export const analyzeAndGeneratePlan = async (
     config: ProjectConfig, 
@@ -622,12 +701,23 @@ export const analyzeAndGeneratePlan = async (
 
       let instruction = MODULE_ENGINEER_INSTRUCTION;
       let context: any = config;
+      let currentAgent: AgentLogStep['agent'] = 'Orchestrator';
 
-      if (file.type === 'ecosystem') instruction = ECOSYSTEM_ARCHITECT_INSTRUCTION;
-      else if (file.type === 'deployment') instruction = DEPLOYMENT_ENGINEER_INSTRUCTION;
-      else if (file.type === 'script') instruction = SCRIPT_ENGINEER_INSTRUCTION;
+      if (file.type === 'ecosystem') {
+          instruction = ECOSYSTEM_ARCHITECT_INSTRUCTION;
+          currentAgent = 'Ecosystem Integrator';
+      }
+      else if (file.type === 'deployment') {
+          instruction = DEPLOYMENT_ENGINEER_INSTRUCTION;
+          currentAgent = 'Deployment Engineer';
+      }
+      else if (file.type === 'script') {
+          instruction = SCRIPT_ENGINEER_INSTRUCTION;
+          currentAgent = 'Script Engineer';
+      }
       else if (file.type === 'module') {
           instruction = MODULE_ENGINEER_INSTRUCTION;
+          currentAgent = 'Module Engineer';
           const parts = file.path.split('/');
           const moduleIndex = parts.indexOf('modules');
           const serviceName = (moduleIndex !== -1 && moduleIndex + 1 < parts.length) ? parts[moduleIndex + 1] : '';
@@ -646,12 +736,12 @@ export const analyzeAndGeneratePlan = async (
       }
 
       const stepId = fileLogIds.get(file.path) || Date.now();
-      onLog({ id: stepId, runId, agent: 'Orchestrator', status: 'running', timestamp: new Date(), level: 'info', message: `Generating: ${file.path}...` });
+      onLog({ id: stepId, runId, agent: currentAgent, status: 'running', timestamp: new Date(), level: 'info', message: `Generating: ${file.path}...` });
       
       try {
         const content = await generateFileStream(context, file, instruction, (partial) => {
             onFileUpdate(file.path, partial);
-        }, onLog, runId, stepId, signal);
+        }, onLog, runId, stepId, currentAgent, signal);
         
         // --- Splitting Logic ---
         if (content.match(/###\s*START OF FILE:/i)) {
@@ -664,7 +754,7 @@ export const analyzeAndGeneratePlan = async (
                     plan.files.push(sf);
                     onFileUpdate(sf.path, sf.content);
                 });
-                onLog({ id: stepId + 9999, runId, agent: 'Orchestrator', status: 'completed', timestamp: new Date(), level: 'debug', message: `Split bundle into ${splitFiles.length} files.` });
+                onLog({ id: stepId + 9999, runId, agent: currentAgent, status: 'completed', timestamp: new Date(), level: 'debug', message: `Split bundle into ${splitFiles.length} files.` });
             }
         } else {
              const idx = plan.files.findIndex(f => f.path === file.path);
@@ -674,10 +764,10 @@ export const analyzeAndGeneratePlan = async (
              }
         }
         
-        onLog({ id: stepId, runId, agent: 'Orchestrator', status: 'completed', timestamp: new Date(), level: 'info', message: `Generated: ${file.path}` });
+        onLog({ id: stepId, runId, agent: currentAgent, status: 'completed', timestamp: new Date(), level: 'info', message: `Generated: ${file.path}` });
       } catch (e: any) {
         onFileUpdate(file.path, `// Error: ${e.message}`);
-        onLog({ id: stepId, runId, agent: 'Orchestrator', status: 'error', timestamp: new Date(), level: 'info', message: `Failed: ${file.path}` });
+        onLog({ id: stepId, runId, agent: currentAgent, status: 'error', timestamp: new Date(), level: 'info', message: `Failed: ${file.path}` });
       }
       
       // CRITICAL DELAY: Prevent 429 Errors by forcing a pause between files
@@ -711,14 +801,33 @@ export const analyzeAndGeneratePlan = async (
   onFileUpdate(auditDoc.path, auditDoc.content);
   onLog({ id: 2, runId, agent: 'Auditor', status: 'completed', timestamp: new Date(), level: 'info', message: 'Audit complete.' });
   
+  // Parallel Documentation & Evaluation
   onLog({ id: 3, runId, agent: 'Writer', status: 'running', timestamp: new Date(), level: 'info', message: 'Writing Documentation...' });
-  const docs = await generateReadme(config, plan.summary, signal);
+  onLog({ id: 4, runId, agent: 'Judge', status: 'running', timestamp: new Date(), level: 'info', message: 'Final Quality Evaluation...' });
+
+  const [docs, quality] = await Promise.all([
+      generateReadme(config, plan.summary, signal),
+      evaluateQuality(plan.files, signal)
+  ]);
   
   const readmeDoc: GeneratedFile = { path: './README.md', content: docs.readme, originalContent: docs.readme, type: 'doc' };
   plan.files.push(readmeDoc);
   onFileUpdate(readmeDoc.path, readmeDoc.content);
+  
+  // NEW: Add Quality Report File
+  const qualityDoc: GeneratedFile = {
+      path: './QUALITY_REPORT.md',
+      content: `# Quality Report\n\n**Score:** ${quality.score}/100 (${quality.grade})\n\n## Reasoning\n${quality.reasoning}`,
+      originalContent: `# Quality Report\n\n**Score:** ${quality.score}/100 (${quality.grade})\n\n## Reasoning\n${quality.reasoning}`,
+      type: 'doc'
+  };
+  plan.files.push(qualityDoc);
+  onFileUpdate(qualityDoc.path, qualityDoc.content);
+
+  plan.qualityReport = quality;
 
   onLog({ id: 3, runId, agent: 'Writer', status: 'completed', timestamp: new Date(), level: 'info', message: 'Done.' });
+  onLog({ id: 4, runId, agent: 'Judge', status: 'completed', timestamp: new Date(), level: 'info', message: `Quality Score: ${quality.score}/100 (${quality.grade})` });
 
   return plan;
 };

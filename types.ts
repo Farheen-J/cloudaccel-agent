@@ -43,10 +43,17 @@ export interface GeneratedFile {
   type: 'module' | 'ecosystem' | 'deployment' | 'state' | 'script' | 'doc';
 }
 
+export interface QualityReport {
+  score: number; // 0-100
+  grade: 'A' | 'B' | 'C' | 'D' | 'F';
+  reasoning: string;
+}
+
 export interface AgentPlan {
   summary: string;
   files: GeneratedFile[];
   workflow_proposal: string;
+  qualityReport?: QualityReport; // NEW: Agent Evaluation Result
 }
 
 export interface ChatMessage {
@@ -58,7 +65,7 @@ export interface ChatMessage {
 export interface AgentLogStep {
   id: number;
   runId: string; // NEW: Session ID to prevent ghost logs
-  agent: 'Orchestrator' | 'Architect' | 'Auditor' | 'Writer' | 'Validator' | 'Designer' | 'Librarian';
+  agent: 'Orchestrator' | 'Architect' | 'Auditor' | 'Writer' | 'Validator' | 'Designer' | 'Librarian' | 'Judge' | 'Module Engineer' | 'Ecosystem Integrator' | 'Deployment Engineer' | 'Script Engineer';
   message: string;
   status: 'pending' | 'running' | 'completed' | 'error';
   timestamp: Date;

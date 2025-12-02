@@ -967,6 +967,7 @@ const App: React.FC = () => {
                         </div>
                         <RepoTree 
                             files={plan.files} 
+                            qualityReport={plan.qualityReport}
                             onSelectFile={(file) => {
                                 const switchFile = () => {
                                     setSelectedFile(file);

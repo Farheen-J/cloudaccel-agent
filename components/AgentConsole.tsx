@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { AgentLogStep } from '../types';
-import { Terminal, CheckCircle2, Loader2, AlertCircle, ShieldCheck, PenTool, Layout, Bug, Hash } from 'lucide-react';
+import { Terminal, CheckCircle2, Loader2, AlertCircle, ShieldCheck, PenTool, Layout, Bug, Hash, Cpu, Boxes, Server, FileCode } from 'lucide-react';
 
 interface AgentConsoleProps {
   logs: AgentLogStep[];
@@ -26,9 +26,24 @@ export const AgentConsole: React.FC<AgentConsoleProps> = ({ logs, debugMode, set
         case 'Architect': return <Layout size={14} className="text-blue-400" />;
         case 'Auditor': return <ShieldCheck size={14} className="text-green-400" />;
         case 'Writer': return <PenTool size={14} className="text-purple-400" />;
+        case 'Module Engineer': return <Boxes size={14} className="text-cyan-400" />;
+        case 'Ecosystem Integrator': return <NetworkIcon size={14} className="text-indigo-400" />;
+        case 'Deployment Engineer': return <Server size={14} className="text-orange-400" />;
+        case 'Script Engineer': return <FileCode size={14} className="text-pink-400" />;
         default: return <Terminal size={14} className="text-gray-400" />;
     }
   };
+
+  // Helper component for icon within switch
+  const NetworkIcon = ({size, className}: {size:number, className:string}) => (
+      <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+          <rect x="16" y="16" width="6" height="6" rx="1"></rect>
+          <rect x="2" y="16" width="6" height="6" rx="1"></rect>
+          <rect x="9" y="2" width="6" height="6" rx="1"></rect>
+          <path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"></path>
+          <path d="M12 12V8"></path>
+      </svg>
+  );
 
   const currentRunId = logs.length > 0 ? logs[logs.length - 1].runId : null;
 
@@ -91,15 +106,15 @@ export const AgentConsole: React.FC<AgentConsoleProps> = ({ logs, debugMode, set
                     </div>
                     <div className="flex flex-col gap-1 flex-1">
                         <div className="flex items-center gap-2">
-                             <span className={`px-1.5 py-0.5 rounded text-[10px] border font-bold uppercase w-20 flex items-center justify-center gap-1
+                             <span className={`px-1.5 py-0.5 rounded text-[10px] border font-bold uppercase w-32 flex items-center justify-center gap-1 shrink-0
                                 ${log.level === 'debug' ? 'bg-gray-900 text-gray-500 border-gray-800' : 'bg-gray-800 text-gray-300 border-gray-700'}
                              `}>
-                                {getAgentIcon(log.agent)} {log.agent}
+                                {getAgentIcon(log.agent)} <span className="truncate">{log.agent}</span>
                              </span>
-                             {log.status === 'running' && <Loader2 size={12} className="animate-spin text-blue-500" />}
-                             {log.status === 'completed' && <CheckCircle2 size={12} className="text-green-500" />}
-                             {log.status === 'error' && <AlertCircle size={12} className="text-red-500" />}
-                             {log.level === 'debug' && <Bug size={10} className="text-gray-600" />}
+                             {log.status === 'running' && <Loader2 size={12} className="animate-spin text-blue-500 shrink-0" />}
+                             {log.status === 'completed' && <CheckCircle2 size={12} className="text-green-500 shrink-0" />}
+                             {log.status === 'error' && <AlertCircle size={12} className="text-red-500 shrink-0" />}
+                             {log.level === 'debug' && <Bug size={10} className="text-gray-600 shrink-0" />}
                         </div>
                         <p className={`pl-1 whitespace-pre-wrap break-all ${log.status === 'running' ? 'text-blue-200' : log.level === 'debug' ? 'text-gray-500' : 'text-gray-400'}`}>
                             {log.message}

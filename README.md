@@ -1,4 +1,4 @@
-# CloudAccel: The Autonomous DevOps Implementation Engine
+# CloudAccel: The Autonomous DevOps Implementation System
 
 **CloudAccel** is an **Autonomous Enterprise Agent** that converts high-level architecture specifications into secure, standardized, and deployable Terraform ecosystems.
 
@@ -113,26 +113,16 @@ flowchart TD
 
 ### The Agent Roster
 
-**1. The Planner (Orchestrator Agent)**
-Acting as the Project Manager, the Orchestrator analyzes the configuration state to create a strict execution plan. It creates the file structure, manages the lifecycle of the request, and delegates tasks to sub-agents. It maintains the global state, ensuring no agent works in isolation.
-
-**2. The Librarian (Tool Use: Google Search Grounding)**
-*The Enterprise Standard Enforcer.* One of the biggest issues with AI-generated Terraform is outdated syntax. The Librarian Agent uses **Google Search** to query the live Terraform Registry. It identifies the *exact, latest verified version* of every required community module before any code is written. This ensures the generated code is deployable today, not yesterday.
-
-**3. The Build Team (Parallel Agents)**
-To maximize speed, the Orchestrator triggers specialized agents that run in parallel:
-*   **The Module Engineer:** Generates standardized, reusable resource blocks.
-*   **The Ecosystem Integrator:** Handles complex "wiring" using `for_each` loops to connect resources dynamically (DRY principles).
-*   **The Deployment Engineer:** Sets up regional folder structures, provider aliases, and state backend configurations.
-
-**4. The Gatekeeper (Security Auditor Agent)**
-*The Compliance Officer.* Before code is presented to the user, the Auditor Agent scans the generated HCL against CIS and NIST benchmarks. If it detects vulnerabilities like open security groups, it **auto-remediates** the code, preventing insecure configurations from slipping through.
-
-**5. The Judge (Quality Evaluation Agent)**
-A distinct evaluation agent that grades the final output against a strict rubric (Syntax, Security, Standards). It provides a "Quality Score" (0-100) and a detailed report (`QUALITY_REPORT.md`) explaining exactly where the code can be improved.
-
-**6. The Sync Engine (Designer Agent)**
-*The Source of Truth.* If an engineer manually tweaks the generated code in the IDE, the Designer Agent reverse-engineers those changes back into the high-level architecture state, ensuring the visual diagram never drifts from reality.
+| Agent Name | Role | Responsibilities |
+| :--- | :--- | :--- |
+| **The Planner** | Orchestrator Agent | Acting as the Project Manager, it analyzes configuration state, creates strict execution plans, manages request lifecycles, delegates tasks, and maintains global state to ensure no agent works in isolation. |
+| **The Librarian** | Researcher (Tool Use) | The Enterprise Standard Enforcer. Uses **Google Search** to query the live Terraform Registry for the exact, latest verified version of every required community module, ensuring code is deployable today. |
+| **Module Engineer** | Builder (Parallel) | Generates standardized, reusable resource blocks. |
+| **Ecosystem Integrator** | Wiring Expert (Parallel) | Handles complex "wiring" using `for_each` loops to connect resources dynamically (DRY principles). |
+| **Deployment Engineer** | Scaler (Parallel) | Sets up regional folder structures, provider aliases, and state backend configurations. |
+| **The Gatekeeper** | Security Auditor Agent | The Compliance Officer. Scans generated HCL against CIS and NIST benchmarks. **Auto-remediates** vulnerabilities (like open security groups) before code delivery to prevent insecure configurations. |
+| **The Judge** | Quality Evaluator Agent | Grades the final output against a strict rubric (Syntax, Security, Standards). Provides a **Quality Score (0-100)** and a detailed report (`QUALITY_REPORT.md`) explaining exactly where code can be improved. |
+| **The Sync Engine** | Designer Agent | The Source of Truth. Parses manual code edits in the IDE and reverse-engineers them back into the high-level architecture state, ensuring the visual diagram never drifts from reality. |
 
 ---
 
@@ -142,14 +132,39 @@ Our journey began with a simple question: *"Can an AI agent replace the first we
 
 We initially built a linear code generator, but quickly hit the limits of generic LLM responses—code was often syntactically correct but structurally flawed (e.g., missing dependencies or variables). We realized that building enterprise infrastructure requires **Separation of Concerns**. We pivoted to a **Multi-Agent Architecture**, isolating the Logic (Architect) from the Implementation (Engineers) and the Validation (Auditor).
 
-We successfully implemented **6 key agentic concepts** required for this challenge:
 
-1.  **Multi-Agent System:** Utilizing both Sequential chains (`Orchestrator` → `Librarian` → `Builder`) and Parallel execution (The Build Team) to balance logic and speed.
-2.  **Tools:** Integrating **Google Search** for the Librarian Agent to solve the "Hallucinated Version" problem.
-3.  **Agent Evaluation:** Implementing a **Model-Based Evaluation Loop**. The Judge Agent serves as an automated QA, ensuring that the system can critique its own work and provide a feedback loop to the user via the Quality Badge.
-4.  **Observability:** Building a real-time **Agent Console** that visualizes the "thoughts" and actions of the swarm with unique trace IDs.
-5.  **State Management:** Implementing a **Time Travel** history system, allowing users to rollback complex configuration changes instantly.
-6.  **Deployment:** Delivering the entire system as a serverless SPA on Vercel, demonstrating that powerful agentic workflows can live entirely on the client-side.
+We successfully implemented **8 key agentic concepts** required for this challenge:
+
+### 1. Multi-agent System
+*   **Hybrid Architecture:** We utilize both **Sequential** and **Parallel** patterns.
+    *   *Sequential:* The macro-workflow follows a strict dependency chain: `Orchestrator` (Plan) → `Librarian` (Research) → `Build Team` (Implement) → `Auditor` (Secure) -> `Judge`
+    *   *Parallel:* Inside the "Build Team," agents are architected to execute concurrently. Additionally, the **Writer Agent** (Documentation) and **Judge Agent** (Evaluation) run in parallel at the end of the pipeline to minimize total latency.
+*   **LLM:** All agents are powered by **Gemini 2.5 Flash**.
+
+### 2. Tools
+*   **Google Search:** The **Librarian Agent** uses Search Grounding to verify live Terraform module versions.
+*   **Custom Tools:** The Orchestrator uses a regex-based **Bundler/Splitter** to manage multi-file generation within rate limits.
+
+### 3. Sessions & Memory
+*   **State Management:** The app maintains a **Time Travel** history stack, allowing users to rollback project snapshots.
+
+### 4. Context Engineering
+*   **Context Compaction:** We split prompts into specialized personas (`MODULE_ENGINEER`, `AUDITOR`) and feed agents only the specific configuration slice they need (e.g., VPC config) rather than the entire project state.
+
+### 5. Observability
+*   **Logging:** A real-time **Agent Console** visualizes execution with unique Trace IDs (`runId`) and granular debug streams.
+
+### 6. A2A Protocol (Agent-to-Agent)
+*   **Hub-and-Spoke Protocol:** CloudAccel uses a centralized Orchestrator pattern. Rather than agents chatting unstructured text to each other, they communicate via strict **Schema-Based Contracts**.
+    *   *Example:* The **Librarian Agent** outputs a structured `ModuleManifest`. The Orchestrator captures this and injects it into the context of the **Module Engineer**, ensuring dependencies are resolved before code generation begins.
+    *   *Example:* The **Build Team** outputs raw HCL code, which is aggregated and piped directly into the **Security Auditor** for validation.
+
+### 7. Agent Evaluation
+*   **Model-Based Eval:** The **Judge Agent** grades the final output against a strict rubric (Syntax, Security, Standards), producing a 0-100 score and `QUALITY_REPORT.md`.
+
+### 8. Agent Deployment
+*   **Serverless Vercel Deployment:** The system is deployed as a Serverless Single Page Application (SPA) on **Vercel**. By leveraging the Google GenAI SDK directly in the browser, we removed the need for heavy backend orchestration, demonstrating a scalable, zero-infrastructure agent model.
+
 
 **Why Google Gemini?**
 CloudAccel relies on **Gemini 2.5 Flash** for two critical reasons:
@@ -158,14 +173,30 @@ CloudAccel relies on **Gemini 2.5 Flash** for two critical reasons:
 
 ---
 
-## 5. Conclusion & Roadmap
+## 5. Tools & Technologies
+
+| Category | Technology | Usage in CloudAccel |
+| :--- | :--- | :--- |
+| **AI Model** | **Google Gemini 2.5 Flash** | The core brain powering all agents (chosen for speed & massive context window). |
+| **IDE** | **Google AI Studio** | A web-based tool to prototype and build applications using Google's Gemini models |
+| **Tools** | **Google Search** | Used by the Librarian Agent for grounding Terraform module versions. |
+| **Frontend** | React 19, TypeScript | The framework for the interactive Agent Console and UI. |
+| **Visualization** | D3.js | Interactive Force-Directed Topology Graph for infrastructure visualization. |
+| **State Management** | LocalStorage / In-Memory | Manages the "Time Travel" history stack and session state. |
+| **Hosting** | Vercel | Serverless deployment platform for the SPA. |
+
+---
+
+## 6. Conclusion & Roadmap
 
 CloudAccel demonstrates the future of AI-assisted DevOps. It enforces standardization through agentic workflows, ensures security through automated auditing, and accelerates delivery by removing the drudgery of boilerplate coding. By treating infrastructure as a collaborative process between specialized AI agents and human architects, CloudAccel allows engineers to focus on *Architecture*, while the Agents handle the *Implementation*.
 
 **What's Next:**
+*   **Improving quality:** Quality of the system has to be improved further to make it more reliable
 *   **AWS Discovery Agent:** Building an agent that connects directly to a user's AWS account to "clone" a live environment into the CloudAccel designer for instant refactoring.
+*   **CI/CD Generation:** Expanding the system to write GitHub Actions pipelines.
 *   **FinOps Agent:** Integrating cost estimation to provide dollar-value impact analysis before deployment.
-*   **CI/CD Generation:** Expanding the Deployment Engineer to write GitHub Actions pipelines.
+*   **Log Retention and Alerting:** Storing the logs generated by each user as well as setting up monitoring and alerting mechanisms for enhanced security
 
 ## 📄 License
 
